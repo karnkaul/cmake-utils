@@ -31,46 +31,82 @@ function(git_update_submodules)
   endif()
 endfunction()
 
-# usage: unzip_archive(<archive_name> <subdir>)
-# unzips ${subdir}/${archive_name} at ${subdir}, hard error if file doesn't exist
-function(unzip_archive archive_name subdir)
-  if(NOT EXISTS "${subdir}/${archive_name}")
-    message(FATAL_ERROR "Required archvive(s) missing!\n${subdir}/${archive_name}")
+# usage: unzip_archive(ARCHIVE <name> SUBDIR <subdir>)
+# unzips ${subdir}/${name} at ${subdir}, hard error if file doesn't exist
+function(unzip_archive)
+  cmake_parse_arguments(args "" "ARCHIVE;SUBDIR" "" ${ARGN})
+  if(args_UNPARSED_ARGUMENTS)
+    message(FATAL_ERROR "Invalid args: ${args_UNPARSED_ARGUMENTS}")
   endif()
-  message(STATUS "Extracting ${archive_name}...")
+  if(args_MISSING_KEYWORDS)
+    message(FATAL_ERROR "Args missing keywords: ${args_MISSING_KEYWORDS}")
+  endif()
+  if(NOT EXISTS "${args_SUBDIR}/${args_ARCHIVE}")
+    message(FATAL_ERROR "Required archvive(s) missing!\n${args_SUBDIR}/${args_ARCHIVE}")
+  endif()
+  message(STATUS "Extracting ${args_ARCHIVE}...")
   execute_process(COMMAND 
-    ${CMAKE_COMMAND} -E tar -xf "${archive_name}"
-    WORKING_DIRECTORY "${subdir}"
+    ${CMAKE_COMMAND} -E tar -xf "${args_ARCHIVE}"
+    WORKING_DIRECTORY "${args_SUBDIR}"
   )
 endfunction()
 
-# usage: target_source_group(<target_name> [prefix])
+# usage: target_source_group(TARGET <name> [PREFIX])
 # sets source group on all sources using current source dir; optionally with prefix
-function(target_source_group target)
-  get_target_property(sources ${target} SOURCES)
-  if(${ARGC} GREATER 1)
-    source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" PREFIX ${ARGV1} FILES ${sources})
+function(target_source_group)
+  cmake_parse_arguments(args "" "TARGET;PREFIX" "" ${ARGN})
+  if(args_UNPARSED_ARGUMENTS)
+    message(FATAL_ERROR "Invalid args: ${args_UNPARSED_ARGUMENTS}")
+  endif()
+  if("${args_TARGET}" STREQUAL "")
+    message(FATAL_ERROR "Missing required args: TARGET")
+  endif()
+  get_target_property(sources ${args_TARGET} SOURCES)
+  if(NOT "${args_PREFIX}" STREQUAL "")
+    source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" PREFIX ${args_PREFIX} FILES ${sources})
   else()
     source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${sources})
   endif()
 endfunction()
 
-# usage: install_target(<target_name> <namespace>)
-# installs ${target_name} and its exports under ${namespace} as ${target-name}-targets 
-function(install_target target_name namespace)
-  message(STATUS "Install ${target_name} under ${namespace}::")
+# usage: configure_src_bin(IN <src> OUT <dst> [TARGET target])
+# configures CURRENT_SOURCE_DIR/${src} to CURRENT_BINARY_DIR/${dst}
+# if target is set, adds dst to its target_sources, and source_group
+function(configure_src_bin)
+  cmake_parse_arguments(args "" "IN;OUT;TARGET" "" ${ARGN})
+  if(args_UNPARSED_ARGUMENTS)
+    message(FATAL_ERROR "Invalid args: ${args_UNPARSED_ARGUMENTS}")
+  endif()
+  if(args_MISSING_KEYWORDS)
+    message(FATAL_ERROR "Args missing keywords: ${args_MISSING_KEYWORDS}")
+  endif()
+  set(dst "${CMAKE_CURRENT_BINARY_DIR}/include/${args_OUT}")
+  message(STATUS "Configuring ${dst}")
+  configure_file("${CMAKE_CURRENT_SOURCE_DIR}/${args_IN}" "${dst}")
+  if(NOT "${args_TARGET}" STREQUAL "")
+    message(STATUS "Adding ${args_OUT} to ${args_TARGET} sources")
+    target_sources(${args_TARGET} PRIVATE "${dst}")
+    source_group(TREE "${CMAKE_CURRENT_BINARY_DIR}" FILES "${dst}")
+  endif()
+endfunction()
+
+# usage: install_targets(TARGETS <target_names...> EXPORT <export_name>)
+# installs ${target_names}... and exports under export_name
+function(install_targets)
+  cmake_parse_arguments(args "" "EXPORT" "TARGETS" ${ARGN})
+  if(args_UNPARSED_ARGUMENTS)
+    message(FATAL_ERROR "Invalid args: ${args_UNPARSED_ARGUMENTS}")
+  endif()
+  if(args_MISSING_KEYWORDS)
+    message(FATAL_ERROR "Args missing keywords: ${args_MISSING_KEYWORDS}")
+  endif()
+  message(STATUS "Install ${args_TARGETS} to ${args_EXPORT} export set")
   # install and export targets
-  install(TARGETS ${target_name} EXPORT ${target_name}-targets
+  install(TARGETS ${args_TARGETS} EXPORT ${args_EXPORT}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-  )
-  # install exported targets
-  install(EXPORT ${target_name}-targets
-    FILE ${target_name}-targets.cmake
-    NAMESPACE ${namespace}::
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${target_name}
   )
 endfunction()
 
@@ -90,77 +126,129 @@ function(install_target_headers)
   )
 endfunction()
 
-# usage: install_pkg_config(<target_name> [filename=config.cmake.in])
-# configures and installs package configuration file ${filename} to CURRENT_BINARY_DIR/${target_name}-config.cmake
-function(install_pkg_config target_name)
-  set(filename config.cmake.in)
-  if(${ARGC} GREATER 1)
-    set(filename ${ARGV1})
+# usage: install_export_package(EXPORT <set> NAMESPACE <namespace> PACKAGE <package_name>)
+# installs ${set} as ${set}.cmake under ${namespace} to ${package_name}
+function(install_export_package)
+  cmake_parse_arguments(args "" "EXPORT;NAMESPACE;PACKAGE" "" ${ARGN})
+  if(args_UNPARSED_ARGUMENTS)
+    message(FATAL_ERROR "Invalid args: ${args_UNPARSED_ARGUMENTS}")
   endif()
-  message(STATUS "Install ${target_name}-config.cmake to ${CMAKE_INSTALL_LIBDIR}/cmake/${target_name}")
-  # configure ${target_name}-config.cmake
-  configure_package_config_file(${CMAKE_CURRENT_SOURCE_DIR}/${filename}
-    "${CMAKE_CURRENT_BINARY_DIR}/${target_name}-config.cmake"
-    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${target_name}
-  )
-  # install ${target_name}-config.cmake
-  install(FILES "${CMAKE_CURRENT_BINARY_DIR}/${target_name}-config.cmake"
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${target_name}
+  if(args_MISSING_KEYWORDS)
+    message(FATAL_ERROR "Args missing keywords: ${args_MISSING_KEYWORDS}")
+  endif()
+  if("${args_PACKAGE}" STREQUAL "" OR "${args_NAMESPACE}" STREQUAL "" OR "${args_EXPORT}" STREQUAL "")
+    message(FATAL_ERROR "Missing required args: PACKAGE;NAMESPACE;EXPORT")
+  endif()
+  message(STATUS "Install export set ${args_EXPORT}.cmake under ${args_NAMESPACE}:: to package ${args_PACKAGE}")
+  install(EXPORT ${args_EXPORT}
+    FILE ${args_EXPORT}.cmake
+    NAMESPACE ${args_NAMESPACE}::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${args_PACKAGE}
   )
 endfunction()
 
-# usage: install_pkg_version(<target_name> <version>)
-# configures and installs package configuration version file to CURRENT_BINARY_DIR/${target_name}-config-version.cmake
-function(install_pkg_version target_name version)
-  message(STATUS "Install ${target_name}-config-version.cmake to ${CMAKE_INSTALL_LIBDIR}/cmake/${target_name}")
-  # configure ${target_name}-version.cmake
+# usage: install_package_config(PACKAGE <package_name> [IN=config.cmake.in])
+# configures and installs package configuration file ${filename} to CURRENT_BINARY_DIR/${package_name}-config.cmake
+function(install_package_config)
+  cmake_parse_arguments(args "" "IN;PACKAGE" "" ${ARGN})
+  if(args_UNPARSED_ARGUMENTS)
+    message(FATAL_ERROR "Invalid args: ${args_UNPARSED_ARGUMENTS}")
+  endif()
+  if("${args_PACKAGE}" STREQUAL "")
+    message(FATAL_ERROR "Missing required args: PACKAGE")
+  endif()
+  if("${args_IN}" STREQUAL "")
+    set(args_IN config.cmake.in)
+  endif()
+  message(STATUS "Install ${args_PACKAGE}-config.cmake to ${CMAKE_INSTALL_LIBDIR}/cmake/${args_PACKAGE}")
+  # configure ${args_PACKAGE}-config.cmake
+  configure_package_config_file("${CMAKE_CURRENT_SOURCE_DIR}/${args_IN}"
+    "${CMAKE_CURRENT_BINARY_DIR}/${args_PACKAGE}-config.cmake"
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${args_PACKAGE}
+  )
+  # install ${args_PACKAGE}-config.cmake
+  install(FILES "${CMAKE_CURRENT_BINARY_DIR}/${args_PACKAGE}-config.cmake"
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${args_PACKAGE}
+  )
+endfunction()
+
+# usage: install_package_version(PACKAGE <package_name> VERSION <version>)
+# configures and installs package configuration version file to CURRENT_BINARY_DIR/${package_name}-version.cmake
+function(install_package_version)
+  cmake_parse_arguments(args "" "VERSION;PACKAGE" "" ${ARGN})
+  if(args_UNPARSED_ARGUMENTS)
+    message(FATAL_ERROR "Invalid args: ${args_UNPARSED_ARGUMENTS}")
+  endif()
+  if(args_MISSING_KEYWORDS)
+    message(FATAL_ERROR "Args missing keywords: ${args_MISSING_KEYWORDS}")
+  endif()
+  if("${args_PACKAGE}" STREQUAL "")
+    message(FATAL_ERROR "Missing required args: PACKAGE")
+  endif()
+  message(STATUS "Install ${args_PACKAGE}-config-version.cmake to ${CMAKE_INSTALL_LIBDIR}/cmake/${args_PACKAGE}")
+  # configure ${args_PACKAGE}-version.cmake
   write_basic_package_version_file(
-    "${CMAKE_CURRENT_BINARY_DIR}/${target_name}-config-version.cmake"
-    VERSION ${version}
+    "${CMAKE_CURRENT_BINARY_DIR}/${args_PACKAGE}-config-version.cmake"
+    VERSION ${args_VERSION}
     COMPATIBILITY AnyNewerVersion
   )
-  # install ${target_name}-config.cmake, ${target_name}-version.cmake
-  install(FILES "${target_name}-version.cmake"
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${target_name}
+  # install ${args_PACKAGE}-config.cmake, ${args_PACKAGE}-version.cmake
+  install(FILES "${CMAKE_CURRENT_BINARY_DIR}/${args_PACKAGE}-config-version.cmake"
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${args_PACKAGE}
   )
 endfunction()
 
-# usage: export_target_to_build_tree(<target_name> <namespace>)
-# exports ${target_name} to CURRENT_BINARY_DIR/${target_name}-targets.cmake
-function(export_target_to_build_tree target_name namespace)
-  message(STATUS "Exporting ${target_name}-targets.cmake to ${CMAKE_CURRENT_BINARY_DIR}")
+# usage: export_package_to_build_tree(PACKAGE <package_name> NAMESPACE <namespace>)
+# exports ${package_name} to CURRENT_BINARY_DIR/${package_name}-targets.cmake
+function(export_package_to_build_tree)
+  cmake_parse_arguments(args "" "NAMESPACE;PACKAGE" "" ${ARGN})
+  if(args_UNPARSED_ARGUMENTS)
+    message(FATAL_ERROR "Invalid args: ${args_UNPARSED_ARGUMENTS}")
+  endif()
+  if(args_MISSING_KEYWORDS)
+    message(FATAL_ERROR "Args missing keywords: ${args_MISSING_KEYWORDS}")
+  endif()
+  if("${args_PACKAGE}" STREQUAL "")
+    message(FATAL_ERROR "Missing required args: PACKAGE")
+  endif()
+  if("${args_NAMESPACE}" STREQUAL "")
+    set(args_NAMESPACE ${args_PACKAGE})
+  endif()
+  message(STATUS "Exporting ${args_PACKAGE}-targets.cmake under ${args_NAMESPACE}:: to ${CMAKE_CURRENT_BINARY_DIR}")
   # export targets to current build tree
-  export(EXPORT ${target_name}-targets
-    FILE "${CMAKE_CURRENT_BINARY_DIR}/${target_name}-targets.cmake"
-    NAMESPACE ${namespace}::
+  export(EXPORT ${args_PACKAGE}-targets
+    FILE "${CMAKE_CURRENT_BINARY_DIR}/${args_PACKAGE}-targets.cmake"
+    NAMESPACE ${args_NAMESPACE}::
   )
 endfunction()
 
-# usage: install_and_export_target(<target_name> [namespace=target_name] [headers=ON] [build_export=ON])
-# installs and exports ${target_name}, optionally with headers and to CURRENT_BINARY_DIR
-# installs package configuration version if ${${namespace}_version} is set
-function(install_and_export_target target_name)
-  set(namespace ${target_name})
-  set(headers ON)
-  set(build_export ON)
-  if(${ARGC} GREATER 1)
-    set(namespace ${ARGV1})
+# usage: install_and_export_target([NOBINEXPORT] [NOHEADERS] TARGET <target_name> [NAMESPACE=target_name] [VERSION <ver>])
+# installs and exports ${target_name}, with headers unless NOHEADERS and to CURRENT_BINARY_DIR unless NOBINEXPORT
+# installs package configuration version if VERSION is passed
+function(install_and_export_target)
+  cmake_parse_arguments(args "NOBINEXPORT;NOHEADERS" "TARGET;NAMESPACE;VERSION;PACKAGE" "" ${ARGN})
+  if(args_UNPARSED_ARGUMENTS)
+    message(FATAL_ERROR "Invalid args: ${args_UNPARSED_ARGUMENTS}")
   endif()
-  if(${ARGC} GREATER 2)
-    set(headers ${ARGV2})
+  if("${args_TARGET}" STREQUAL "")
+    message(FATAL_ERROR "Missing required args: TARGET")
   endif()
-  if(${ARGC} GREATER 3)
-    set(build_export ${ARGV3})
+  if("${args_NAMESPACE}" STREQUAL "")
+    set(args_NAMESPACE ${args_TARGET})
   endif()
-  install_target(${target_name} ${namespace})
-  if(headers)
+  if("${args_PACKAGE}" STREQUAL "")
+    set(args_PACKAGE ${args_TARGET})
+  endif()
+  install_targets(TARGETS ${args_TARGET} EXPORT ${args_PACKAGE}-targets)
+  if(NOT args_NOHEADERS)
     install_target_headers()
   endif()
-  install_pkg_config(${target_name})
-  if(NOT "${${namespace}_version}" STREQUAL "")
-    install_pkg_version(${target_name} ${${namespace}_version})
+  install_export_package(EXPORT ${args_PACKAGE}-targets NAMESPACE ${args_NAMESPACE} PACKAGE ${args_PACKAGE})
+  install_package_config(PACKAGE ${args_PACKAGE})
+  if(NOT "${args_VERSION}" STREQUAL "")
+    install_package_version(PACKAGE ${args_PACKAGE} VERSION ${args_VERSION})
   endif()
-  if(build_export)
-    export_target_to_build_tree(${target_name} ${namespace})
+  if(NOT args_NOBINEXPORT)
+    export_package_to_build_tree(PACKAGE ${args_PACKAGE} NAMESPACE ${args_NAMESPACE})
   endif()
 endfunction()
